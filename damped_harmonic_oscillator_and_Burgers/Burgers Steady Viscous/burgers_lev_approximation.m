@@ -1,0 +1,404 @@
+% damped harmonic oscillator with periodic driving force
+% example taken from https://www5.in.tum.de/lehre/vorlesungen/algo_uq/ss18/06_polynomial_chaos.pdf
+
+%% changing single variabe: the forcing frequency w. Just a quick test here
+% parameter setup
+a = -1;
+b = 1;
+alpha = 1;
+beta = -1;
+p = [a,b,alpha,beta];
+
+nu = 0.1;
+n = 5000;
+% initial condition 
+% yinit = [.5 0];
+% 
+% % time domain setup
+% tmax = 20;
+% dt = 0.01;
+% 
+% [t,y] = ode45(@(t,y) odemodel(t,y,p),[0 tmax],yinit);
+% figure();
+% plot(t,y(:,1),t,y(:,2))
+alphavals = 0.9:.01:1.2;
+x = (linspace(a,b,n));
+qoifull = zeros(size(alphavals));
+for i = 1:length(alphavals)
+    alpha = alphavals(i);
+    u = burgers_steady_viscous(a,b,alpha,beta,nu,n,true);
+    % taking the crossing where the function switches its sign as the qoi.
+    qoifull(i) = bsv_crossing(a,b,n,x,u);
+%     qoifull(i) = u(100);
+end
+% plot(alphavals,qoifull)
+
+deg = 4;
+P = zeros(length(alphavals),deg);
+P(:,1) = ones(length(alphavals),1);
+P(:,2) = alphavals-1;
+for i = 3:deg
+    P(:,i) = 2*P(:,2).*P(:,i-1) - P(:,i-2);
+end
+
+nsamps = 20;
+% uniform random samples
+indunif = randi(length(alphavals),nsamps,1);
+qoi_fit_uniform = P*(pinv(P(indunif,:))*qoifull(indunif)');
+figure(1);
+plot(alphavals,qoifull,alphavals,qoi_fit_uniform);
+legend({'qoifull','qoiuniform'});
+
+
+% leverage score samples
+U = orth(P);
+levs = sum(U.^2,2);
+indlev = randsample(length(alphavals),nsamps,true,levs);
+sP = (1./sqrt(levs)).*P;
+sqoi = (1./sqrt(levs))'.*qoifull;
+qoi_fit_lev = P*(pinv(sP(indlev,:))*sqoi(indlev)');
+figure(2);
+plot(alphavals,qoifull,alphavals,qoi_fit_lev);
+legend({'qoifull','qoilev'});
+
+%% changing multiple variable: the forcing frequency w and spring constant k
+% parameter setup
+
+a = -1;
+b = 1;
+alpha = 1;
+beta = -1;
+p = [a,b,alpha,beta];
+nu = 0.1;
+n = 5000;
+x = (linspace(a,b,n));
+% initial condition 
+% yinit = [.5 0];
+
+% time domain setup
+
+
+alphavals = 0.9:.01:1.3;
+betavals = -1.2:.01:-0.8;
+qoifull = zeros(length(alphavals),length(betavals));
+for i = 1:length(alphavals)
+    for j = 1:length(betavals)
+        alpha = alphavals(i);
+        beta = betavals(j);
+        u = burgers_steady_viscous(a,b,alpha,beta,nu,n,true);
+        qoifull(i,j) = bsv_crossing(a,b,n,x,u);
+%         qoifull(i,j) = u(1000);
+    end
+end
+qoifull = qoifull - min(min(qoifull));
+imagesc(qoifull)
+colorbar
+
+% our acutally degree is deg - 1
+deg = 13;
+Pw = zeros(length(alphavals),deg);
+Pk = zeros(length(betavals),deg);
+Pw(:,1) = ones(length(alphavals),1);
+Pk(:,1) = ones(length(betavals),1);
+Pw(:,2) = alphavals-1;
+Pk(:,2) = betavals-2;
+for i = 3:deg
+    Pw(:,i) = 2*Pw(:,2).*Pw(:,i-1) - Pw(:,i-2);
+    Pk(:,i) = 2*Pk(:,2).*Pk(:,i-1) - Pk(:,i-2);
+end
+
+N = length(alphavals)*length(betavals);
+P2d = zeros(N,deg*(deg-1)/2);
+c = 1;
+for i = 1:deg
+    for j = 1:(deg-i+1)
+        P2d(:,c) = reshape(Pw(:,i)*Pw(:,j)',N,1);
+        c = c+1;
+    end
+end
+
+U = orth(P2d);
+levs = sum(U.^2,2);
+levsSquare = reshape(levs,length(alphavals),length(betavals));
+imagesc(levsSquare);
+colorbar
+
+% what does sampling by leverage scores look like?
+msamp = .05*rand(length(alphavals),length(betavals)) < levsSquare;
+spy(msamp)
+
+% qoifull = qoifull-.5;
+
+%% generate final plots: generates image 2b and 2c
+figure(3);
+% clims = [-1.5,1];
+imagesc(flipud(qoifull));
+colorbar
+end_color = 2.5;
+rng(2022);
+% caxis([0 .5]);
+
+colormap parula(50);
+set(gca,'fontsize',14);
+set(gca,'TickLabelInterpreter','latex');
+xind = 1:floor((length(betavals)/10)):length(betavals);
+yind = 1:floor((length(alphavals)/10)):length(alphavals);
+set(gca,'Xtick',xind,'XTickLabel',betavals(xind));
+set(gca,'Ytick',yind,'YTickLabel',flip(alphavals(yind)));
+set(gca, 'CLim', [0 end_color]);
+xlabel('Final boundary condition, $u(b) = \beta$','FontSize',22,'interpreter','latex');
+ylabel('Initial boundary condition, $u(a) = \alpha$','FontSize',22,'interpreter','latex');
+% title('True Max Displacement','FontSize',30,'interpreter','latex');
+exportgraphics(gca,'burgers_true.png','Resolution',600) 
+
+dotsize = 100;
+
+nsamps = 200;
+qoivec = reshape(qoifull,N,1);
+% uniform random samples
+indunif = randi(N,nsamps,1);
+[urows,ucols] = ind2sub([length(alphavals) length(betavals)],indunif);
+A = P2d(indunif,:);
+b = qoivec(indunif);
+f = @(x) max(x,0);
+fprime = @(x) (x>=0);
+x = grad_descent(A,b,f,fprime,10000,0.1);
+qoi_fit_uniform = f(P2d*x);
+qoi_fit_uniform = reshape(qoi_fit_uniform,length(alphavals),length(betavals));
+figure(4);
+
+imagesc(flipud(qoi_fit_uniform));
+colorbar
+colormap parula(50);
+% caxis([0 .5]);
+hold();
+mean(mean((qoi_fit_uniform - qoifull).^2))
+xlim([0,length(alphavals)])
+ylim([0,length(betavals)])
+set(gca,'fontsize',14);
+set(gca,'TickLabelInterpreter','latex');
+xind = 1:floor((length(betavals)/10)):length(betavals);
+yind = 1:floor((length(alphavals)/10)):length(alphavals);
+set(gca,'Xtick',xind,'XTickLabel',betavals(xind));
+set(gca,'Ytick',yind,'YTickLabel',flip(alphavals(yind)));
+set(gca, 'CLim', [0 end_color]);
+xlabel('Final boundary condition, $u(b) = \beta$','FontSize',22,'interpreter','latex');
+ylabel('Initial boundary condition, $u(a) = \alpha$','FontSize',22,'interpreter','latex');
+% title('Uniform Sampling
+% Approximation','FontSize',30,'interpreter','latex');o
+exportgraphics(gca,'burgers_unif.png','Resolution',600) 
+
+
+% leverage score samples
+indlev = randsample(N,nsamps,true,levs);
+[lrows,lcols] = ind2sub([length(alphavals) length(betavals)],indlev);
+sP2d = (1./sqrt(levs)).*P2d;
+sqoivec = (1./sqrt(levs)).*qoivec;
+A = sP2d(indlev,:);
+b = sqoivec(indlev);
+f = @(x) max(x,0);
+fprime = @(x) (x>=0);
+x = grad_descent(A,b,f,fprime,10000,0.1);
+qoi_fit_lev = f(P2d*x);
+qoi_fit_lev = reshape(qoi_fit_lev,length(alphavals),length(betavals));
+figure(5); 
+imagesc(flipud(qoi_fit_lev));
+colorbar
+% caxis([0 .5]);
+hold();
+
+% scatter(lrows,lcols,dotsize,'.k');
+mean(mean((qoi_fit_lev - qoifull).^2))
+xlim([0,length(alphavals)])
+colormap parula(50);
+ylim([0,length(betavals)])
+set(gca,'fontsize',14);
+set(gca,'TickLabelInterpreter','latex');
+xind = 1:floor((length(betavals)/10)):length(betavals);
+yind = 1:floor((length(alphavals)/10)):length(alphavals);
+set(gca,'Xtick',xind,'XTickLabel',betavals(xind));
+set(gca,'Ytick',yind,'YTickLabel',flip(alphavals(yind)));
+set(gca, 'CLim', [0 end_color]);
+xlabel('Final boundary condition, $u(b) = \beta$','FontSize',22,'interpreter','latex');
+ylabel('Initial boundary condition, $u(a) = \alpha$','FontSize',22,'interpreter','latex');
+% title('Leverage Sampling Approximation','FontSize',30,'interpreter','latex');
+exportgraphics(gca,'burgers_lev.png','Resolution',600) 
+
+%% computing l2 errors
+trials = 100;
+nsampvals = 30:20:400;
+errsunif = zeros(trials,length(nsampvals));
+errslev = zeros(trials,length(nsampvals));
+% errsquasi = zeros(trials,length(nsampvals));
+% errsquasiunif = zeros(trials,length(nsampvals));
+
+%quasi random sequencex`x``
+% p = haltonset(2,'Skip',1e3,'Leap',1e2);
+% p = scramble(p,'RR2');
+
+f = @(x) max(x,0);
+fprime = @(x) (x>=0);
+for i = 1:length(nsampvals)
+    nsamps = nsampvals(i);
+    fprintf('Getting result for %d\n',nsamps);
+    for j = 1:trials
+        if mod(j,51)==0
+            fprintf('Trial 51 for %d\n',nsamps);
+        end
+        qoivec = reshape(qoifull,N,1);
+        % uniform random samples
+        indunif = randi(N,nsamps,1);
+        [urows,ucols] = ind2sub([length(alphavals) length(betavals)],indunif);
+        A = P2d(indunif,:);
+        b = qoivec(indunif);
+        f = @(x) max(x,0);
+        fprime = @(x) (x>=0);
+        x = grad_descent(A,b,f,fprime,10000,.1);
+        qoi_fit_uniform = f(P2d*x);
+        qoi_fit_uniform = reshape(qoi_fit_uniform,length(alphavals),length(betavals));
+        errsunif(j,i) = mean(mean((qoi_fit_uniform - qoifull).^2));
+        
+        indlev = randsample(N,nsamps,true,levs);
+        [lrows,lcols] = ind2sub([length(alphavals) length(betavals)],indlev);
+        sP2d = (1./sqrt(levs)).*P2d;
+        sqoivec = (1./sqrt(levs)).*qoivec;
+        A = sP2d(indlev,:);
+        b = sqoivec(indlev);
+        x = grad_descent(A,b,f,fprime,10000,.1);
+        qoi_fit_lev = f(P2d*x);
+        qoi_fit_lev = reshape(qoi_fit_lev,length(alphavals),length(betavals));
+        errslev(j,i) = mean(mean((qoi_fit_lev - qoifull).^2)); 
+%         xyval = round(2*p(c:nsamps+c,:)-1,2);
+%         indquasi = int64((xyval+1)*100) + 1;
+%         qrows = indquasi(:,1); qcols = indquasi(:,2);
+%         indquasi = sub2ind([length(wvals) length(kvals)],indquasi(:,1),indquasi(:,2));
+%         qoi_fit_quasi = P2d*(pinv(P2d(indquasi,:))*qoivec(indquasi));
+%         qoi_fit_quasi = reshape(qoi_fit_quasi,length(wvals),length(kvals));
+%         errsquasiunif(j,i) = mean(mean((qoi_fit_quasi - qoifull).^2));
+%         
+%         xyval = round(cos(p(c:nsamps+c,:)*pi),2);
+%         c = c + nsamps;
+%         indquasi = int64((xyval+1)*100) + 1;
+%         qrows = indquasi(:,1); qcols = indquasi(:,2);
+%         indquasi = sub2ind([length(wvals) length(kvals)],indquasi(:,1),indquasi(:,2));
+%         qoi_fit_quasi = P2d*(pinv(sP2d(indquasi,:))*sqoivec(indquasi));
+%         qoi_fit_quasi = reshape(qoi_fit_quasi,length(wvals),length(kvals));
+%         errsquasi(j,i) = mean(mean((qoi_fit_quasi - qoifull).^2));   
+    end
+end
+%% 
+
+mqoi = mean(mean(qoifull.^2));
+
+unifmean = mean(errsunif);
+unifsort = sort(errsunif)/mqoi;
+unifmedian = unifsort(50,:);
+uniflower = unifsort(25,:);
+unifupper = unifsort(75,:);
+
+levmean = mean(errslev);
+levsort = sort(errslev)/mqoi;
+levmedian = levsort(50,:);
+levlower = levsort(25,:);
+levupper = levsort(75,:);
+
+% quasisort = sort(errsquasi)/mqoi;
+% quasimedian = quasisort(50,:)/mqoi;
+% quasilower = quasisort(25,:)/mqoi;
+% quasiupper = quasisort(75,:)/mqoi;
+% 
+% quasiunifsort = sort(errsquasiunif)/mqoi;
+% quasiunifmedian = quasiunifsort(50,:)/mqoi;
+% quasiuniflower = quasiunifsort(25,:)/mqoi;
+% quasiunifupper = quasiunifsort(75,:)/mqoi;
+
+
+% compute best possible error
+% qoi_fit_best = P2d*(pinv(P2d)*qoivec);
+% qoi_fit_best = reshape(qoi_fit_best,length(wvals),length(kvals));
+% best_error = mean(mean((qoi_fit_best - qoifull).^2))/mqoi;
+
+red = [0.8500, 0.3250, 0.0980];
+blue = [0 0.4470 0.7410];
+
+mqoi = mean(mean(qoifull.^2));
+
+% quantitative plot
+c = length(nsampvals);
+start = 3;
+figure(6); hold();
+plot(nsampvals(start:c), unifmedian(start:c), 'Color', red, 'LineWidth', 2)
+% plot(nsampvals(1:c), quasiunifmedian(1:c),'-.', 'Color', red,'LineWidth', 2)
+plot(nsampvals(start:c), levmedian(start:c),'Color', blue, 'LineWidth', 2)
+% plot(nsampvals(1:c), quasimedian(1:c),'-.', 'Color', blue,'LineWidth', 2)
+% plot(nsampvals(1:c), best_error*ones(1,c),'--k', 'LineWidth', 2)
+
+x2 = [nsampvals(start:c), fliplr(nsampvals(start:c))];
+inBetween = [uniflower(start:c), fliplr(unifupper(start:c))];
+h = fill(x2,inBetween,red);
+set(h,'facealpha',.1)
+set(h,'edgealpha',.1)
+
+
+% x2 = [nsampvals(1:c), fliplr(nsampvals(1:c))];
+% inBetween = [quasiuniflower(1:c), fliplr(quasiunifupper(1:c))];
+% h = fill(x2,inBetween,red);
+% set(h,'facealpha',.1)
+% set(h,'edgealpha',.1)
+
+x2 = [nsampvals(start:c), fliplr(nsampvals(start:c))];
+inBetween = [levlower(start:c), fliplr(levupper(start:c))];
+h = fill(x2,inBetween,blue);
+set(h,'facealpha',.1)
+set(h,'edgealpha',.1)
+
+% x2 = [nsampvals(1:c), fliplr(nsampvals(1:c))];
+% inBetween = [quasilower(1:c), fliplr(quasiupper(1:c))];
+% h = fill(x2,inBetween,'b');
+% set(h,'facealpha',.1)
+% set(h,'edgealpha',.1)
+
+
+set(gca,'fontsize',18);
+set(gca,'TickLabelInterpreter','latex');
+set(gca, 'YScale', 'log');
+% set(gca, 'XScale', 'log');
+xlim([nsampvals(start),nsampvals(c)])
+% ylim([0,0.5])
+
+legend({'Uniform Sampling', 'Leverage Sampling'}, 'FontSize',20,'interpreter','latex','Location', 'northeast');
+xlabel('number of samples','FontSize',24,'interpreter','latex');
+ylabel('relative mean squared error','FontSize',24,'interpreter','latex');
+exportgraphics(gca,'unif_lev_compare_all.png','Resolution',600) 
+
+
+figure()
+% visualizing sampling patterns
+dotsize = 200;
+
+% quasi-random
+p = haltonset(2,'Skip',1e3,'Leap',1e2);
+p = scramble(p,'RR2');
+X0 = p(1:500,:);
+scatter(cos(X0(:,1)*pi),cos(X0(:,2)*pi),dotsize,'r.')
+exportgraphics(gca,'quasi_samps.png','Resolution',600) 
+
+% quasi-random unfiform
+p = haltonset(2,'Skip',1e3,'Leap',1e2);
+p = scramble(p,'RR2');
+X0 = p(1:500,:);
+scatter(X0(:,1)*2-1,X0(:,2)*2-1,dotsize,'.','MarkerEdgeColor',[0 .5 0],'MarkerFaceColor',[0 .5 0])
+exportgraphics(gca,'quasi_samps_unif.png','Resolution',600) 
+
+% uniform random
+scatter(2*rand(500,1)-1,2*rand(500,1)-1,dotsize,'k.');
+exportgraphics(gca,'unif_samps.png','Resolution',600) ;
+
+% leverage random
+indlev = randsample(N,500,true,levs);
+[urows,ucols] = ind2sub([length(alphavals) length(betavals)],indlev);
+scatter(alphavals(urows)-1,betavals(ucols)-2,dotsize,'b.');
+exportgraphics(gca,'lev_samps.png','Resolution',600) ;
+
+
+        
